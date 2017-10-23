@@ -21,6 +21,10 @@ class Dense:
         assert self.X.shape == (batch_size, self.insz)
         self.dW = numpy.dot(self.X.T, dY) / batch_size
         self.dY = numpy.dot(dY, self.W.T)
+
+        # !!!!!!!!!!!!!!!!!
+        self.dW.fill(0)
+
         return self.dY
 
 class Conv2d:
@@ -28,45 +32,46 @@ class Conv2d:
         self.W  = numpy.random.uniform(low=-0.5, high=0.5, size=(dep_out, dep_in, msize, nsize))
         self.dW = numpy.zeros(shape=(dep_out, dep_in, msize, nsize))
     def forward(self, X, _):
-        # batch_size, xsize, ysize = X.shape
-        dep_in, dep_out, msize, nsize = self.W.shape
-        batch_size, _, xsize, ysize = X.shape
+        dep_out, dep_in, msize, nsize = self.W.shape
+        batch_size, dep_in_x, xsize, ysize = X.shape
+        assert dep_in_x == dep_in
         self.X = X
-        self.Y = numpy.zeros(shape=(batch_size, xsize, ysize))
+        self.Y = numpy.zeros(shape=(batch_size, dep_out, xsize, ysize))
         for b_id in range(batch_size):
             for d_out in range(dep_out):
                 for d_in in range(dep_in):
-                   self.Y[b_id] += convolve2d(self.W[dep_out, dep_in], self.X[b_id])[:xsize, :ysize]
+                    self.Y[b_id, d_out] += convolve2d(self.W[d_out, d_in], self.X[b_id, d_in])[:xsize, :ysize]
         return self.Y
     def backward(self, dY):
-        dep_in, dep_out, msize, nsize = self.W.shape
-        batch_size, xsize, ysize = X.shape
-        self.dY = numpy.zeros(shape=(batch_size, xsize, ysize))
+        dep_out, dep_in, msize, nsize = self.W.shape
+        batch_size, dep_out_x, xsize, ysize = self.X.shape
+        assert dep_in == dep_out_x
+        self.dY = numpy.zeros(shape=(batch_size, dep_in, xsize, ysize))
         self.dW = numpy.zeros(shape=(dep_out, dep_in, msize, nsize))
         # backprop for dW
         for b_id in range(batch_size):
             for d_out in range(dep_out):
                 for d_in in range(dep_in):
-                    self.dW[d_out, d_in] += convolve2d(dY[b_id], self.X[b_id])[:msize, :nsize]
+                    self.dW[d_out, d_in] += convolve2d(dY[b_id, d_out], self.X[b_id, d_in])[:msize, :nsize]
         self.dW /= (batch_size * dep_in * msize * nsize)
         # backprop for dY for current layer
         for b_id in range(batch_size):
             for d_out in range(dep_out):
                 for d_in in range(dep_in):
-                    self.dY[b_id] += convolve2d(dY[b_id], self.W[d_out, d_in])[:xsize, :ysize]
+                    self.dY[b_id, d_in] += convolve2d(dY[b_id, d_out], self.W[d_out, d_in])[:xsize, :ysize]
         return self.dY
 
 class Flatten:
-    def __init__(self, xsize, ysize, outsz):
-        self.outsz = outsz
-        self.xsize = xsize
-        self.ysize = ysize
+    def __init__(self, dep_in, xsize, ysize):
+        self.dep_in = dep_in
+        self.xsize  = xsize
+        self.ysize  = ysize
     def forward(self, X, _):
         batch_size = X.shape[0]
-        return numpy.reshape(X, newshape=(batch_size, self.outsz))
+        return numpy.reshape(X, newshape=(batch_size, self.dep_in * self.xsize * self.ysize))
     def backward(self, dY):
         batch_size = dY.shape[0]
-        return numpy.reshape(dY, newshape=(batch_size, self.xsize, self.ysize))
+        return numpy.reshape(dY, newshape=(batch_size, self.dep_in, self.xsize, self.ysize))
 
 class UnFlatten:
     def __init__(self, oldshape, newshape):
@@ -130,7 +135,7 @@ class Optimizer(object):
 
 # Very strong and resource consuming optimizer
 class SGD(Optimizer):
-    def __init__(self, model, lr=0.001, m=0.95):
+    def __init__(self, model, lr=0.0001, m=0.95):
         super(SGD, self).__init__(model)
         self.V = numpy.zeros(shape=self.W.shape)
         self.lr = lr
@@ -265,8 +270,8 @@ class Learner:
           print('Epoch:', epoch, 'train:', L_train, 'valid:', L_valid)
 
 # Try on mnist data
-def LoadData(size=10000):
-    if 1:
+def LoadData(size=100):
+    if 0:
         # Windows
         import _pickle as cPickle, gzip
         f = gzip.open('C:\data\mnist.pkl.gz','rb')
@@ -290,37 +295,21 @@ Y_test = Y[0:10]
 X = X[10:]
 Y = Y[10:]
 
-cur_optimizer = 'Adam'
+cur_optimizer = 'SGD'
 optimizer_setup = {'Adam' : (Adam, 32), 'SGD' : (SGD, 32), 'LBFGS' : (LBFGS, 200)}
 
 if 0:
     model = Sequential([Dense(784, 50), Activation(),
-                        Dense(50, 48), Activation(),
-                        Dense(48, 45), Activation(),
-                        Dense(45, 43), Activation(),
-                        Dense(43, 40), Activation(),
-                        Dense(40, 38), Activation(),
-                        Dense(38, 35), Activation(),
-                        Dense(35, 32), Activation(),
-                        Dense(32, 30), Activation(),
-                        Dense(30, 28), Activation(),
-                        Dense(28, 25), Activation(),
-                        Dense(25, 22), Activation(),
-                        Dense(22, 20), Activation(),
-                        Dense(20, 18), Activation(),
-                        Dense(18, 15), Activation(),
-                        Dense(15, 13), Activation(),
-                        Dense(13, 10), Activation(),
+                        Dense(50, 10), Activation(),
                         Loss()],
                        optimizer_setup[cur_optimizer][0])
     lr = Learner(model)
     lr.train(X, Y, optimizer_setup[cur_optimizer][1], 100, 0.1)
 elif 1:
     model = Sequential([UnFlatten(oldshape=784, newshape=(1, 28, 28)),
-                        Conv2d(1, 6, 3, 3), Activation(),
-                        Conv2d(6, 4, 3, 3), Activation(),
-                        Flatten(28, 28, 20),
-                        Dense(20, 10), Activation(),
+                        Conv2d(1, 1, 4, 4), Activation(),
+                        Flatten(1, 28, 28),
+                        Dense(1 * 28 * 28, 10), Activation(),
                         Loss()],
                        optimizer_setup[cur_optimizer][0])
     lr = Learner(model)
